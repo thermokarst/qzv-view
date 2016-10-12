@@ -38,7 +38,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	io.Copy(f, file)
 
-	err = Unzip(filename, filepath.Join("tmp", "serve"))
+	err = unzip(filename, filepath.Join("tmp", "serve"))
 	if err != nil {
 		panic(err)
 	}
@@ -72,7 +72,7 @@ func main() {
 }
 
 // Modified from http://stackoverflow.com/a/24792688
-func Unzip(src, dest string) error {
+func unzip(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
@@ -132,7 +132,7 @@ func Unzip(src, dest string) error {
 	return nil
 }
 
-var index string = `
+var index = `
 <!DOCTYPE html>
 <html>
 <head>
