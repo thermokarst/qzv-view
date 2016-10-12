@@ -55,7 +55,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	http.Redirect(w, r, vizpath, 301)
+	http.Redirect(w, r, filepath.ToSlash(vizpath), 301)
 }
 
 func main() {
