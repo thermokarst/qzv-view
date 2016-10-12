@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +97,8 @@ func Unzip(src, dest string) error {
 			}
 		}()
 
-		path := filepath.Join(dest, f.Name)
+		components := strings.Split(f.Name, "/")
+		path := filepath.Join(append([]string{dest}, components...)...)
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, 0755)
