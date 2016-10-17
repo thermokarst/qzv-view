@@ -2,66 +2,63 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"fmt"
 	"github.com/pkg/browser"
-	"io"
+	"io/ioutil"
+	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"regexp"
-	"strings"
+	"time"
 )
 
-func rootHandler(w http.ResponseWriter, r *http.Request) {
+type dataMap map[string]*bytes.Reader
+
+type zipContext struct {
+	Data dataMap
+}
+
+func (z *zipContext) rootHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, index)
 }
 
-func uploadHandler(w http.ResponseWriter, r *http.Request) {
+func (z *zipContext) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseMultipartForm(32 << 20)
-	file, handler, err := r.FormFile("artifact")
+	file, _, err := r.FormFile("artifact")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	defer file.Close()
-
-	os.RemoveAll("tmp")
-	os.Mkdir("tmp", 0755)
-	filename := filepath.Join("tmp", handler.Filename)
-
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0666)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer f.Close()
-	io.Copy(f, file)
-
-	err = unzip(filename, filepath.Join("tmp", "serve"))
-	if err != nil {
+	if err := unzip(file, z.Data); err != nil {
 		panic(err)
 	}
 
 	var vizpath string
-
-	filepath.Walk("tmp", func(path string, f os.FileInfo, _ error) error {
-		if !f.IsDir() {
-			r, err := regexp.MatchString("index.", f.Name())
-			if err == nil && r {
-				vizpath = path
-			}
+	for k := range z.Data {
+		r, err := regexp.MatchString("index.", k)
+		if err == nil && r {
+			vizpath = k
 		}
-		return nil
-	})
+	}
 
-	http.Redirect(w, r, filepath.ToSlash(vizpath), 301)
+	http.Redirect(w, r, path.Join("tmp", vizpath), 301)
+}
+
+func (z *zipContext) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	filename := r.URL.Path
+	http.ServeContent(w, r, filename, time.Now(), z.Data[filename])
 }
 
 func main() {
-	http.HandleFunc("/", rootHandler)
-	http.HandleFunc("/upload", uploadHandler)
-	http.Handle("/tmp/", http.StripPrefix("/tmp", http.FileServer(http.Dir("tmp"))))
+	zipServer := &zipContext{
+		Data: make(dataMap),
+	}
+
+	http.HandleFunc("/", zipServer.rootHandler)
+	http.HandleFunc("/upload", zipServer.uploadHandler)
+	http.Handle("/tmp/", http.StripPrefix("/tmp/", zipServer))
 
 	err := browser.OpenURL("http://localhost:8282")
 	if err != nil {
@@ -71,64 +68,28 @@ func main() {
 	http.ListenAndServe(":8282", nil)
 }
 
-// Modified from http://stackoverflow.com/a/24792688
-func unzip(src, dest string) error {
-	r, err := zip.OpenReader(src)
+func unzip(source multipart.File, unzipped dataMap) error {
+	var buff bytes.Buffer
+	sourceSize, err := buff.ReadFrom(source)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := r.Close(); err != nil {
-			panic(err)
-		}
-	}()
+	r, err := zip.NewReader(source, sourceSize)
+	if err != nil {
+		return err
+	}
 
-	os.MkdirAll(dest, 0755)
-
-	// Closure to address file descriptors issue with all the deferred .Close() methods
-	extractAndWriteFile := func(f *zip.File) error {
+	for _, f := range r.File {
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if err := rc.Close(); err != nil {
-				panic(err)
-			}
-		}()
-
-		components := strings.Split(f.Name, "/")
-		path := filepath.Join(append([]string{dest}, components...)...)
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, 0755)
-		} else {
-			os.MkdirAll(filepath.Dir(path), 0755)
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			if err != nil {
-				return err
-			}
-			defer func() {
-				if err := f.Close(); err != nil {
-					panic(err)
-				}
-			}()
-
-			_, err = io.Copy(f, rc)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	for _, f := range r.File {
-		err := extractAndWriteFile(f)
+		b, err := ioutil.ReadAll(rc)
 		if err != nil {
 			return err
 		}
+		unzipped[f.Name] = bytes.NewReader(b)
 	}
-
 	return nil
 }
 
@@ -136,7 +97,7 @@ var index = `
 <!DOCTYPE html>
 <html>
 <head>
-  <title>dnd binary upload</title>
+  <title>qiime qzv viewer</title>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <style>
 /*!
